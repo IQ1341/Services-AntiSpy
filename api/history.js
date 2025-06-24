@@ -1,58 +1,45 @@
-const admin = require("firebase-admin");
-const express = require("express");
-const cors = require("cors");
-require('dotenv').config();
+const { db, admin } = require("../firebase");
 
-const app = express();
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// Inisialisasi Firebase Admin SDK hanya jika belum ada instance
-const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-
-if (!serviceAccountJson) {
-  throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON belum diset di environment variable');
-}
-
-const serviceAccount = JSON.parse(serviceAccountJson);
-
-// Inisialisasi Firebase Admin SDK jika belum ada
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-}
-
-const db = admin.firestore();
-
-// Endpoint untuk menerima data history dari ESP32
-app.post('/api/history', async (req, res) => {
   const { motion, timestamp } = req.body;
 
-  if (!['Terdeteksi', 'Tidak terdeteksi'].includes(motion)) {
-    return res.status(400).json({ error: 'Nilai motion tidak valid' });
+  if (!motion || !timestamp) {
+    return res.status(400).json({
+      error: "Field 'motion' dan 'timestamp' wajib diisi",
+    });
   }
 
   try {
-    const docRef = await db.collection('History').add({
+    let dateObj;
+    try {
+      dateObj = new Date(timestamp.replace(" ", "T"));
+    } catch (e) {
+      console.warn("Gagal parse waktu, gunakan serverTimestamp");
+    }
+
+    const waktu = dateObj instanceof Date && !isNaN(dateObj)
+      ? admin.firestore.Timestamp.fromDate(dateObj)
+      : admin.firestore.FieldValue.serverTimestamp();
+
+    await db.collection("History").add({
       motion,
       timestamp,
-      createdAt: new Date(),
+      waktu,
     });
-    res.status(200).json({ message: 'Data tersimpan', id: docRef.id });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+
+    return res.status(200).json({
+      success: true,
+      message: "Data gerakan berhasil disimpan",
+    });
+  } catch (err) {
+    console.error("Gagal menyimpan data:", err);
+    return res.status(500).json({
+      error: "Gagal menyimpan data gerakan",
+      detail: err.message,
+    });
   }
-});
-
-// Export sebagai handler serverless
-if (require.main === module) {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`Server berjalan di http://localhost:${PORT}`);
-  });
 }
-
-module.exports = app;
